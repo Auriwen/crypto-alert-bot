@@ -1,0 +1,20 @@
+# Virtual environment
+.venv/
+venv/
+
+# Secrets
+.env
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# SQLite database (created at runtime)
+*.db
+*.sqlite3
+
+# Editor / OS files
+.vscode/
+.idea/
+.DS_Store
