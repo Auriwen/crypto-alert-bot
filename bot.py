@@ -1,15 +1,22 @@
 """Telegram bot that alerts users when a cryptocurrency crosses a price."""
 
+import asyncio
 import logging
 import os
 import sys
 
 from dotenv import load_dotenv
 from telegram import Update
+from telegram.error import Forbidden, TelegramError
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 import db
-from alerts import format_price, parse_alert_args
+from alerts import format_price, is_triggered, parse_alert_args
+from prices import get_prices
+
+CHECK_INTERVAL_SECONDS = 60
+
+logger = logging.getLogger(__name__)
 
 HELP_TEXT = (
     "Hi! I send you a message when a cryptocurrency crosses a price you set.\n"
@@ -78,6 +85,40 @@ async def delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(f"You have no alert #{alert_id}. See /list.")
 
 
+async def check_alerts(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Background job: notify users whose alerts fired, then delete those alerts."""
+    alerts = db.get_all_alerts()
+    if not alerts:
+        return
+
+    symbols = sorted({row["coin"] for row in alerts})  # each coin only once
+    # requests is blocking, so run it in a worker thread to keep the bot responsive
+    prices = await asyncio.to_thread(get_prices, symbols)
+
+    for row in alerts:
+        price = prices.get(row["coin"])
+        if price is None or not is_triggered(price, row["direction"], row["target_price"]):
+            continue
+
+        text = (
+            f"🔔 {row['coin'].upper()} is now {row['direction']} "
+            f"{format_price(row['target_price'])} EUR "
+            f"(current price: {format_price(price)} EUR).\n"
+            f"Alert #{row['id']} has been removed."
+        )
+        try:
+            await context.bot.send_message(chat_id=row["chat_id"], text=text)
+        except Forbidden:
+            # The user blocked the bot. They can't be notified anymore, so drop the alert.
+            logger.info("Chat %s blocked the bot, deleting alert #%s", row["chat_id"], row["id"])
+        except TelegramError as error:
+            # Probably a temporary problem: keep the alert and try again next round.
+            logger.warning("Could not send alert #%s: %s", row["id"], error)
+            continue
+
+        db.delete_alert(row["chat_id"], row["id"])
+
+
 def main() -> None:
     load_dotenv()  # copies variables from .env into os.environ, if the file exists
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -98,6 +139,7 @@ def main() -> None:
     app.add_handler(CommandHandler("alert", alert))
     app.add_handler(CommandHandler("list", list_alerts))
     app.add_handler(CommandHandler("delete", delete))
+    app.job_queue.run_repeating(check_alerts, interval=CHECK_INTERVAL_SECONDS, first=10)
 
     app.run_polling()  # blocks until Ctrl+C
 

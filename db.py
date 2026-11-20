@@ -46,6 +46,12 @@ def get_alerts(chat_id: int) -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def get_all_alerts() -> list[sqlite3.Row]:
+    """Return the alerts of all chats, for the background price check."""
+    with closing(connect()) as conn:
+        return conn.execute("SELECT * FROM alerts ORDER BY id").fetchall()
+
+
 def delete_alert(chat_id: int, alert_id: int) -> bool:
     """Delete an alert if it belongs to this chat. Return True if one was deleted."""
     with closing(connect()) as conn, conn:
