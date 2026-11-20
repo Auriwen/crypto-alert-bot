@@ -5,6 +5,18 @@ import requests
 COINGECKO_URL = "https://api.coingecko.com/api/v3/simple/price"
 TIMEOUT_SECONDS = 10
 
+# Symbols users type -> CoinGecko coin ids
+COIN_IDS = {
+    "btc": "bitcoin",
+    "eth": "ethereum",
+    "sol": "solana",
+    "xrp": "ripple",
+    "ada": "cardano",
+    "doge": "dogecoin",
+    "ltc": "litecoin",
+    "dot": "polkadot",
+}
+
 
 def get_price(coin: str, currency: str = "eur") -> float | None:
     """Return the current price of `coin` in `currency`, or None on any error.

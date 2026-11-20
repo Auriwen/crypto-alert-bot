@@ -8,6 +8,9 @@ from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
+import db
+from alerts import format_price, parse_alert_args
+
 HELP_TEXT = (
     "Hi! I send you a message when a cryptocurrency crosses a price you set.\n"
     "\n"
@@ -23,7 +26,56 @@ HELP_TEXT = (
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Reply to /start and /help with the help text."""
-    await update.message.reply_text(HELP_TEXT)
+    await update.effective_message.reply_text(HELP_TEXT)
+
+
+async def alert(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /alert <coin> <above|below> <price>."""
+    try:
+        coin, direction, price = parse_alert_args(context.args)
+    except ValueError as error:
+        await update.effective_message.reply_text(str(error))
+        return
+
+    alert_id = db.add_alert(update.effective_chat.id, coin, direction, price)
+    await update.effective_message.reply_text(
+        f"Alert #{alert_id} set: {coin.upper()} {direction} {format_price(price)} EUR"
+    )
+
+
+async def list_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /list: show all alerts of this chat."""
+    rows = db.get_alerts(update.effective_chat.id)
+    if not rows:
+        await update.effective_message.reply_text(
+            "You have no alerts. Create one with /alert btc above 70000"
+        )
+        return
+
+    lines = [
+        f"#{row['id']}: {row['coin'].upper()} {row['direction']} "
+        f"{format_price(row['target_price'])} EUR"
+        for row in rows
+    ]
+    await update.effective_message.reply_text("Your alerts:\n" + "\n".join(lines))
+
+
+async def delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /delete <id>."""
+    if len(context.args) != 1:
+        await update.effective_message.reply_text("Usage: /delete <id>, e.g. /delete 3")
+        return
+
+    id_text = context.args[0].lstrip("#")  # accept both "3" and "#3"
+    if not id_text.isdigit():
+        await update.effective_message.reply_text(f"'{context.args[0]}' is not a valid alert id.")
+        return
+
+    alert_id = int(id_text)
+    if db.delete_alert(update.effective_chat.id, alert_id):
+        await update.effective_message.reply_text(f"Alert #{alert_id} deleted.")
+    else:
+        await update.effective_message.reply_text(f"You have no alert #{alert_id}. See /list.")
 
 
 def main() -> None:
@@ -39,8 +91,13 @@ def main() -> None:
     # httpx logs every request URL, and Telegram URLs contain the bot token.
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
+    db.init_db()
+
     app = Application.builder().token(token).build()
     app.add_handler(CommandHandler(["start", "help"], start))
+    app.add_handler(CommandHandler("alert", alert))
+    app.add_handler(CommandHandler("list", list_alerts))
+    app.add_handler(CommandHandler("delete", delete))
 
     app.run_polling()  # blocks until Ctrl+C
 
